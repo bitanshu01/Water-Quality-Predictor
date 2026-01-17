@@ -1,2 +1,2 @@
 # Water-Quality-Predictor
-Checking water quality based on previous data
+Checking ground water quality by some Machine Learning models taking previous data in consideration
