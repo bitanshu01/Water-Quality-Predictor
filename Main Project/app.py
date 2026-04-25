@@ -5,6 +5,9 @@ import joblib
 import os
 from tensorflow.keras.models import load_model
 
+from flask_cors import CORS
+CORS(app)
+
 app = Flask(__name__)
 
 # -----------------------------
