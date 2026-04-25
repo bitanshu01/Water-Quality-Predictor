@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Water Quality Prediction Dashboard</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        .fade-in {
+            animation: fadeIn 0.6s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+
+<div class="container mt-5">
+    <div class="card shadow p-4">
+
+        <h2 class="text-center mb-4 text-primary">
+            Water Quality Prediction (Ensemble Model)
+        </h2>
+
+        <div class="row">
+
+            <div class="col-md-4">
+                <label class="form-label">Area</label>
+                <input list="areaList" id="areaInput" class="form-control" placeholder="Type area name">
+                <datalist id="areaList"></datalist>
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">Station Code</label>
+                <select id="stationSelect" class="form-select">
+                    <option value="">Select station</option>
+                </select>
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">Future Year</label>
+                <input type="number" id="yearInput" class="form-control" value="2027">
+            </div>
+
+        </div>
+
+        <div class="text-center mt-4">
+            <button class="btn btn-primary px-5" onclick="predict()">
+                Predict
+            </button>
+        </div>
+
+        <h4 class="text-center mt-4" id="result"></h4>
+
+        <!-- Placeholder -->
+        <div id="placeholder" class="text-center text-muted mt-5">
+            <h5>📊 No data yet</h5>
+            <p>Select an area, station, and year to generate prediction.</p>
+        </div>
+
+        <!-- Chart -->
+        <div id="chartContainer" style="display:none; margin-top:20px;">
+            <canvas id="wqiChart" height="120"></canvas>
+        </div>
+
+        <hr>
+
+        <div id="rankingSection" style="display:none;">
+
+            <hr>
+
+            <h4 class="text-center mt-4">Station Pollution Ranking</h4>
+
+            <div class="row mt-3">
+
+                <div class="col-md-6">
+                    <h5 class="text-danger">Top 5 Most Polluted</h5>
+                    <ul id="mostPolluted" class="list-group"></ul>
+                </div>
+
+                <div class="col-md-6">
+                    <h5 class="text-success">Top 5 Cleanest</h5>
+                    <ul id="cleanest" class="list-group"></ul>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+</div>
+
+<script>
+
+let chart;
+
+// Load Areas + Ranking
+window.onload = function() {
+
+    fetch("/get-areas")
+    .then(res => res.json())
+    .then(data => {
+        let list = document.getElementById("areaList");
+        data.forEach(area => {
+            let option = document.createElement("option");
+            option.value = area;
+            list.appendChild(option);
+        });
+    });
+
+};
+
+// Load stations when area changes
+document.getElementById("areaInput").addEventListener("change", function() {
+
+    let area = this.value;
+
+    fetch("/get-stations", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({area: area})
+    })
+    .then(res => res.json())
+    .then(data => {
+
+        let stationSelect = document.getElementById("stationSelect");
+        stationSelect.innerHTML = '<option value="">Select station</option>';
+
+        data.forEach(station => {
+            let option = document.createElement("option");
+            option.value = station;
+            option.text = station;
+            stationSelect.appendChild(option);
+        });
+    });
+});
+
+function predict() {
+
+    let station = document.getElementById("stationSelect").value;
+    let year = document.getElementById("yearInput").value;
+
+    fetch("/predict", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            station: station,
+            year: year
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+
+        if (data.error) {
+            document.getElementById("result").innerHTML =
+                `<span class="text-danger">${data.error}</span>`;
+            return;
+        }
+
+        let allYears = [...data.historical_years, data.future_year];
+        let allWQI = [...data.historical_wqi, data.predicted_wqi];
+
+        let color = "blue";
+        if (data.category === "Good") color = "green";
+        if (data.category === "Average") color = "orange";
+        if (data.category === "Bad") color = "red";
+
+        // Show chart only after prediction
+        let chartBox = document.getElementById("chartContainer");
+        chartBox.style.display = "block";
+
+        // Hide placeholder
+        document.getElementById("placeholder").style.display = "none";
+        drawChart(allYears, allWQI, color);
+
+        document.getElementById("rankingSection").style.display = "block";
+        loadRanking();
+
+        document.getElementById("result").innerHTML =
+            `<div class="mt-3">
+                <h5>
+                    Year ${data.future_year} →
+                    WQI ${data.predicted_wqi}
+                    <span class="badge ms-2"
+                        style="background-color:${color}">
+                        ${data.category}
+                    </span>
+                </h5>
+
+                <p><b>Trend:</b> ${data.trend}</p>
+                <p><b>Improvement Since First Year:</b> ${data.improvement_percent}%</p>
+                <p><b>Risk Level:</b> ${data.risk}</p>
+            </div>`;
+    });
+}
+
+function drawChart(years, values, lineColor) {
+
+    if(chart) {
+        chart.destroy();
+    }
+
+    const ctx = document.getElementById('wqiChart').getContext('2d');
+
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: years,
+            datasets: [{
+                label: 'WQI Trend',
+                data: values,
+                borderColor: lineColor,
+                backgroundColor: lineColor,
+                borderWidth: 3,
+                fill: false,
+                tension: 0.3
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+}
+
+function loadRanking() {
+
+    fetch("/station-ranking")
+    .then(res => res.json())
+    .then(data => {
+
+        let pollutedList = document.getElementById("mostPolluted");
+        let cleanList = document.getElementById("cleanest");
+
+        pollutedList.innerHTML = "";
+        cleanList.innerHTML = "";
+
+        data.most_polluted.forEach(station => {
+
+            pollutedList.innerHTML += 
+                `<li class="list-group-item d-flex justify-content-between align-items-center"
+                    style="background-color:#ffebee; border-left:5px solid #c62828;">
+                    
+                    <div>
+                        <strong>⚠ ${station["locations"]}</strong><br>
+                        <small class="text-muted">
+                            Station Code: ${station["station code"]}
+                        </small>
+                    </div>
+
+                    <span class="badge bg-danger fs-6">
+                        ${station["wqi"].toFixed(2)}
+                    </span>
+                </li>`;
+        });
+
+        data.cleanest.forEach(station => {
+
+            cleanList.innerHTML += 
+                `<li class="list-group-item d-flex justify-content-between align-items-center"
+                    style="background-color:#e8f5e9; border-left:5px solid #2e7d32;">
+                    
+                    <div>
+                        <strong>🌊 ${station["locations"]}</strong><br>
+                        <small class="text-muted">
+                            Station Code: ${station["station code"]}
+                        </small>
+                    </div>
+
+                    <span class="badge bg-success fs-6">
+                        ${station["wqi"].toFixed(2)}
+                    </span>
+                </li>`;
+        });
+    });
+}
+
+</script>
+
+</body>
+</html>
